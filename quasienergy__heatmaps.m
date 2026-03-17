@@ -1,112 +1,156 @@
-function floquet()
-    % Parameters based on Dunlap and Kenkre (1986)
-    % System properties
-    N = 101;            % Lattice size (odd to have a distinct center)
-    center_site = (N+1)/2;
-    V = 1;              % Nearest-neighbor hopping integral [cite: 18]
-    hbar = 1;           % Reduced Planck's constant (set to 1 as in paper [cite: 29])
-    
-    % Time parameters
-    t_max = 20;         % Maximum simulation time (dimensionless Vt)
-    t_span = linspace(0, t_max, 300);
-    
-    % Define the simulation cases (Ratio = E_magnitude / omega)
-    % Case 1: No field (Delocalized)
-    % Case 2: AC Field with "Magic Ratio" (Localized) -> First root of J0 ~ 2.405 [cite: 135]
-    % Case 3: AC Field with Non-magic Ratio (Delocalized)
-    
-    cases = struct('name', {}, 'ratio', {}, 'omega', {});
-    cases(1) = struct('name', 'No Field (E=0)', 'ratio', 0, 'omega', 1);
-    cases(2) = struct('name', 'Localized (Ratio \approx 2.405)', 'ratio', 2.4048, 'omega', 5);
-    cases(3) = struct('name', 'Delocalized (Ratio = 1.5)', 'ratio', 1.5, 'omega', 5);
+function dynamic_local_2()
+% Simulation of 1D Tight-Binding Model with Driving
 
-    % Initialize figure
-    figure('Color', 'w', 'Position', [100, 100, 1000, 600]);
+    %% SYSTEM CONFIG
+    % Physical Parameters
+    N = 51;             % Number of sites
+    J = 1;              % Tunneling amplitude
+    center_site = 26;   % Initial localization site
     
-    for i = 1:length(cases)
-        % Field parameters
-        % From paper: ratio = E_mag / omega. 
-        % Therefore E_mag = ratio * omega.
-        omega = cases(i).omega;
-        E_mag = cases(i).ratio * omega; 
+    % Driving Parameters
+    omega = 10;         % Driving frequency (High frequency regime)
+    ratios = [0, 1, 2.4048, 3]; % K/omega ratios
+    
+    % Simulation Parameters
+    T_total = 40;       % Total simulation time
+    dt = 0.1;           % Sampling time step
+    time_axis = 0:dt:T_total;
+    
+    % Solver Options
+    opts = odeset('RelTol', 1e-6, 'AbsTol', 1e-8);
+
+    %% TIME EVOL AND PLOTTING
+    % Using a tiled layout for a clean, single-window view of all propagations
+    figure('Name', 'Time Evolution of Probability Density', 'Color', 'w', 'Position', [100, 100, 1000, 800]);
+    tiledlayout(2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+    
+    for i = 1:length(ratios)
+        ratio = ratios(i);
+        K = ratio * omega;
         
-        % Initial State: Particle localized at the center site m=0
-        psi0 = zeros(N, 1);
+        % Initial State: Localized at center
+        psi0 = zeros(N,1);
         psi0(center_site) = 1;
         
-        % Solve ODE
-        % We solve d(psi)/dt = -1i/hbar * H(t) * psi
-        [t, psi_t] = ode45(@(t, psi) hamiltonian_func(t, psi, N, V, E_mag, omega, hbar), t_span, psi0);
+        % Defining Hamiltonian function handle
+        H_func = @(t, psi) hamiltonian_1d(t, psi, N, J, K, omega);
         
-        % Calculate Observables
-        prob_density = abs(psi_t).^2;
+        % Solving Time-Dependent Schrödinger Equation
+        [~, PSI_sol] = ode45(H_func, time_axis, psi0, opts);
         
-        % Mean Square Displacement <m^2> 
-        % Sites are indexed 1 to N. We shift them so center is 0.
-        sites = ((1:N) - center_site)'; 
-        msd = zeros(length(t), 1);
+        % Calculatinh |psi|^2
+        Prob_Density = abs(PSI_sol).^2;
         
-        for k = 1:length(t)
-            msd(k) = sum((sites.^2) .* prob_density(k, :)');
+        % Plotting Current Tile
+        nexttile;
+        imagesc(time_axis, 1:N, Prob_Density');
+        set(gca, 'YDir', 'normal', 'FontSize', 12, 'LineWidth', 1.5);
+        colormap(jet);
+        
+        % Titles and formatting
+        if ratio == 0
+            title_str = "Static (Ballistic)";
+            subtitle_str = "J_{eff} = J";
+        elseif abs(ratio - 2.4048) < 0.01
+            title_str = "Dynamic Localization";
+            subtitle_str = "K/\omega \approx 2.404, J_{eff} \approx 0";
+        else
+            title_str = sprintf("Driven: K/\\omega = %.1f", ratio);
+            eff_J = J * besselj(0, ratio);
+            subtitle_str = sprintf("J_{eff} \\approx %.2f J", eff_J);
         end
         
-        % Plotting MSD
-        subplot(1, 2, 1);
-        hold on;
-        plot(t, msd, 'LineWidth', 2, 'DisplayName', cases(i).name);
-        
-        % Plotting Probability Distribution at final time
-        subplot(1, 2, 2);
-        hold on;
-        plot(sites, prob_density(end, :), 'LineWidth', 1.5, 'DisplayName', cases(i).name);
+        title({title_str, subtitle_str}, 'FontWeight', 'bold');
+        xlabel('Time (1/J)');
+        ylabel('Site Index');
+        clim([0 0.4]); % Standardizing color limit for comparison
     end
     
-    % Format Plots
-    subplot(1, 2, 1);
-    title('Mean Square Displacement \langle m^2 \rangle');
-    xlabel('Time (t)');
-    ylabel('\langle m^2 \rangle');
-    legend('Location', 'northwest');
-    grid on;
-    % Replicate paper observation: Bounded MSD for Ratio=2.405 [cite: 136]
-    
-    subplot(1, 2, 2);
-    title(['Probability Distribution at t = ' num2str(t_max)]);
-    xlabel('Lattice Site m');
-    ylabel('Probability |\psi_m|^2');
-    xlim([-20 20]); % Zoom in on center
-    legend('Location', 'northeast');
-    grid on;
+    % Global Colorbar
+    cb = colorbar;
+    cb.Layout.Tile = 'east';
+    cb.Label.String = '|\psi|^2 Probability';
+    cb.Label.FontSize = 12;
 
+    %% FLOQUET QUASIENERGY SPECTRUM
+    % Calculating evolution operator over one period T = 2*pi/omega
+    disp('Calculating Floquet Spectrum (this may take a moment)...');
+    
+    T_period = 2*pi/omega;
+    figure('Name', 'Floquet Quasienergy Spectrum', 'Color', 'w', 'Position', [150, 150, 1200, 400]);
+    t = tiledlayout(1, 3, 'TileSpacing', 'compact', 'Padding', 'compact');
+    title(t, 'Floquet Quasienergy Spectrum', 'FontSize', 16, 'FontWeight', 'bold');
+
+    % Looping only through the driven cases (indices 2, 3, 4)
+    driven_indices = 2:4; 
+    
+    for i = driven_indices
+        ratio = ratios(i);
+        K = ratio * omega;
+        
+        % Constructing Floquet Operator U(T) column by column
+        U_Floquet = zeros(N, N);
+        
+        for n = 1:N
+            basis_vec = zeros(N,1);
+            basis_vec(n) = 1;
+            [~, sol] = ode45(@(t,p) hamiltonian_1d(t,p,N,J,K,omega), [0 T_period], basis_vec, opts);
+            U_Floquet(:, n) = sol(end, :).';
+        end
+        
+        % Diagonalizing U to get eigenvalues lambda
+        eigenvals_U = eig(U_Floquet);
+        
+        % Quasienergies: epsilon = i/T * log(lambda)
+        % Taking the real part (imaginary part should be 0 for unitary U)
+        quasienergies = real(1i/T_period * log(eigenvals_U));
+        quasienergies = sort(quasienergies);
+        
+        % Theoretical Bandwidth (4 * J_eff)
+        eff_J = abs(J * besselj(0, ratio));
+        bandwidth_theory = 4 * eff_J;
+        
+        % Plotting Spectrum
+        nexttile;
+        plot(quasienergies, 'o-', 'LineWidth', 1.5, 'MarkerSize', 4, 'Color', [0 0.4470 0.7410]);
+        grid on; box on;
+        set(gca, 'FontSize', 12, 'LineWidth', 1.2);
+        
+        xlim([0 N+1]);
+        ylim([-2.5 2.5]); % Fixed y-limits for easy visual comparison
+        
+        xlabel('State Index n');
+        if i == 2; ylabel('Quasienergy \epsilon'); end
+        
+        title(sprintf('K/\\omega = %.3f', ratio), 'FontWeight', 'bold');
+        subtitle(sprintf('Bandwidth \\approx %.2f (Theory: %.2f)', ...
+            max(quasienergies)-min(quasienergies), bandwidth_theory));
+    end
 end
 
-% ---------------------------------------------------------
-% Helper Function: Time-Dependent Hamiltonian
-% ---------------------------------------------------------
-function dpsidt = hamiltonian_func(t, psi, N, V, E_mag, omega, hbar)
-    % Construct the Hamiltonian matrix H(t)
+%% HELPER FUNCTIONS DEFINITION
+
+function dpsidt = hamiltonian_1d(t, psi, N, J, K, omega)
+    % Computes time derivative dpsi/dt = -i*H(t)*psi
     
-    % 1. Off-diagonal elements (Hopping V) [cite: 18]
-    % H includes |m><m+1| and |m+1><m|
-    e = ones(N, 1);
-    H_kin = spdiags([V*e V*e], [-1 1], N, N);
+    % Potential Energy Term (Diagonal)
+    % V(n) = K * cos(omega*t) * n
+    % Centering the potential at (N+1)/2 to keep the lattice symmetric
+    n_indices = (1:N)';
+    V_site = K * cos(omega * t) * (n_indices - (N+1)/2); 
     
-    % 2. Diagonal elements (Electric Potential)
-    % The paper Hamiltonian term is -eE(t)a * sum(m |m><m|) [cite: 19]
-    % Here we define E(t) = E_mag * cos(omega * t).
-    % Sites are shifted so the center is m=0.
-    m_indices = ((1:N) - (N+1)/2)';
+    % Kinetic Energy Term (Off-diagonal / Hopping)
+    % H_hopping = -J (|n><n+1| + |n+1><n|)
+    % Implementing via vectorized shifting for speed
+    psi_left = [0; psi(1:end-1)];  % Shifts indices n -> n+1
+    psi_right = [psi(2:end); 0];   % Shifts indices n -> n-1
     
-    % The paper defines parameter epsilon = eEa. 
-    % We treat E_mag as this epsilon parameter.
-    field_strength = E_mag * cos(omega * t); 
+    H_psi_kinetic = -J * (psi_left + psi_right);
+    H_psi_potential = V_site .* psi;
     
-    % Potential energy term on diagonal
-    H_pot = spdiags(-field_strength * m_indices, 0, N, N);
+    % 3. Applying total H to psi
+    H_psi = H_psi_kinetic + H_psi_potential;
     
-    % Total Hamiltonian
-    H = H_kin + H_pot;
-    
-    % Schrödinger Equation: d(psi)/dt = -i/hbar * H * psi
-    dpsidt = -1i / hbar * H * psi;
+    % Schrödinger Equation: dpsi/dt = -i * H * psi
+    dpsidt = -1i * H_psi;
 end
